@@ -1259,6 +1259,15 @@ static int r_debug_desc_native_open (const char *path) {
 	return 0;
 }
 
+static bool r_debug_gcore (RDebug *dbg, const char *newcorefile) {
+	#if __APPLE__
+		int result = xnu_generate_corefile (dbg, newcorefile);
+		return true;
+	#else
+		return -1;
+	#endif
+}
+
 struct r_debug_desc_plugin_t r_debug_desc_plugin_native = {
 	.open = r_debug_desc_native_open,
 	.list = r_debug_desc_native_list,
@@ -1315,7 +1324,7 @@ struct r_debug_plugin_t r_debug_plugin_native = {
 	.frames = &r_debug_native_frames, // rename to backtrace ?
 	.reg_profile = (void *)r_debug_native_reg_profile,
 	.reg_read = r_debug_native_reg_read,
-        .info = r_debug_native_info,
+	.info = r_debug_native_info,
 	.reg_write = (void *)&r_debug_native_reg_write,
 	.map_alloc = r_debug_native_map_alloc,
 	.map_dealloc = r_debug_native_map_dealloc,
@@ -1324,6 +1333,7 @@ struct r_debug_plugin_t r_debug_plugin_native = {
 	.map_protect = r_debug_native_map_protect,
 	.breakpoint = r_debug_native_bp,
 	.drx = r_debug_native_drx,
+	.gcore = r_debug_gcore,
 };
 
 #ifndef CORELIB
