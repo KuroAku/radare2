@@ -595,6 +595,16 @@ static cpu_type_t get_cpu_type (pid_t pid) {
 	return NULL;
 }
 
+static cpu_subtype_t get_cpu_subtype () {
+	size_t size;
+	cpu_subtype_t subtype;
+
+	size = sizeof (cpu_subtype_t);
+	sysctlbyname ("hw.cpusubtype", &subtype, &size, NULL, 0);
+
+	return subtype;
+}
+
 static void xnu_build_corefile_header (vm_offset_t header,
 	int segment_count, int thread_count, int command_size, pid_t pid) {
 #if __ppc64__ || __x86_64__
@@ -602,7 +612,7 @@ static void xnu_build_corefile_header (vm_offset_t header,
 	mh64 = (struct mach_header_64 *)header;
 	mh64->magic	= MH_MAGIC_64;
 	mh64->cputype = get_cpu_type (pid);
-	mh64->cpusubtype = -1; // TODO
+	mh64->cpusubtype = get_cpu_subtype (); 
 	mh64->filetype = MH_CORE;
 	mh64->ncmds	= segment_count + thread_count;
 	mh64->sizeofcmds = command_size;
@@ -612,7 +622,7 @@ static void xnu_build_corefile_header (vm_offset_t header,
 	mh = (struct mach_header *)header;
 	mh->magic = MH_MAGIC;
 	mh->cputype	= get_cpu_type (pid);
-	mh->cpusubtype = -1; // TODO
+	mh->cpusubtype = get_cpu_subtype ();
 	mh->filetype = MH_CORE;
 	mh->ncmds = segment_count + thread_count;
 	mh->sizeofcmds = command_size;
