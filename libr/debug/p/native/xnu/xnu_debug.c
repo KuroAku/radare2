@@ -18,6 +18,7 @@
 #include <string.h>
 #include <mach/mach_host.h>
 #include <mach/host_priv.h>
+#include <mach/mach_vm.h>
 #include <mach/thread_status.h>
 
 static task_t task_dbg = 0;
@@ -560,8 +561,8 @@ static int xnu_get_bits_with_sysctl (pid_t pid) {
 #define SAME_BITNESS(proc_pid)\
 	 (get_bits () == xnu_get_bits_with_sysctl (proc_pid))
 
-static void get_mach_header_sizes(int *mach_header_sz, 
-									int *segment_command_sz) {
+static void get_mach_header_sizes(size_t *mach_header_sz, 
+									size_t *segment_command_sz) {
 #if __ppc64__ || __x86_64__
 	*mach_header_sz = sizeof(struct mach_header_64);
 	*segment_command_sz = sizeof(struct segment_command_64);
@@ -573,13 +574,34 @@ static void get_mach_header_sizes(int *mach_header_sz,
 // XXX: What about arm?
 }
 
-static int xnu_build_corefile_header (vm_offset_t header,
-	int segment_count, int thread_count, int command_size) {
+static cpu_type_t get_cpu_type (pid_t pid) {
+	int mib[CTL_MAXNAME];
+	size_t len = CTL_MAXNAME;
+	cpu_type_t cpu_type;
+	size_t cpu_type_len = sizeof (cpu_type_t);
+
+	if (sysctlnametomib ("sysctl.proc_cputype", mib, &len) == -1) {
+		perror ("sysctlnametomib");
+		return NULL;
+	}
+
+	mib[len] = pid;
+	len++;
+	if (sysctl (mib, len, &cpu_type, &cpu_type_len, NULL, 0) == -1) {
+		perror ("sysctl");
+		return NULL;
+	}
+	if (cpu_type_len > 0) return cpu_type;
+	return NULL;
+}
+
+static void xnu_build_corefile_header (vm_offset_t header,
+	int segment_count, int thread_count, int command_size, pid_t pid) {
 #if __ppc64__ || __x86_64__
 	struct mach_header_64 *mh64;
 	mh64 = (struct mach_header_64 *)header;
 	mh64->magic	= MH_MAGIC_64;
-	mh64->cputype = -1; // TODO
+	mh64->cputype = get_cpu_type (pid);
 	mh64->cpusubtype = -1; // TODO
 	mh64->filetype = MH_CORE;
 	mh64->ncmds	= segment_count + thread_count;
@@ -589,7 +611,7 @@ static int xnu_build_corefile_header (vm_offset_t header,
 	struct mach_header *mh;
 	mh = (struct mach_header *)header;
 	mh->magic = MH_MAGIC;
-	mh->cputype	= -1; // TODO
+	mh->cputype	= get_cpu_type (pid);
 	mh->cpusubtype = -1; // TODO
 	mh->filetype = MH_CORE;
 	mh->ncmds = segment_count + thread_count;
@@ -614,6 +636,7 @@ static int xnu_dealloc_threads (RList *threads) {
 		vm_deallocate (mach_task_self (), (vm_address_t)thread_list,
 			thread_count * sizeof (thread_act_t));
 	}
+	return kr;
 }
 
 static int xnu_prepare_corefile (RDebug *dbg, const char *newcorefile) {
@@ -684,7 +707,7 @@ static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset
 #endif
 
 	r_list_foreach_safe (mem_maps, iter, iter2, curr_map) {
-		printf ("Writing section from 0x%08x to 0x%08x (%d)\n", 
+		printf ("Writing section from 0x%llx to 0x%llx (%llu)\n", 
 			curr_map->addr, curr_map->addr_end, curr_map->size);
 
 		vm_map_offset_t vmoffset = curr_map->addr;
@@ -713,7 +736,7 @@ static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset
 #endif
 
 		if ((curr_map->perm & VM_PROT_READ) == 0) 
-			mach_vm_protect (task_dbg, curr_map->addr, curr_map->size, 
+			mach_vm_protect (task_dbg, curr_map->addr, curr_map->size, FALSE,
 				curr_map->perm | VM_PROT_READ);
 
 		/* Acording to osxbook, the check should be like this: */
@@ -738,7 +761,7 @@ static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset
 					eprintf ("Failed to read target memory\n"); // XXX: Improve this message?
 					printf ("[DEBUG] kr = %d\n", kr);
 					printf ("[DEBUG] KERN_SUCCESS = %d\n", KERN_SUCCESS);
-					printf ("[DEBUG] xfer_size = %d\n", xfer_size);
+					printf ("[DEBUG] xfer_size = %llu\n", xfer_size);
 					printf ("[DEBUG] local_size = %d\n", local_size);
 					if (kr > 1) error = -1; // XXX: INVALID_ADDRESS is not a bug right know
 					goto cleanup;
@@ -770,7 +793,7 @@ cleanup:
 	return error;
 }
 
-static int xnu_collect_thread_state (thread_t port, void *tirp) {
+static void xnu_collect_thread_state (thread_t port, void *tirp) {
 	vm_offset_t header;
 	int i, hoffset;
 	coredump_thread_state_flavor_t *flavors;
@@ -846,7 +869,7 @@ int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	header_size = command_size + mach_header_sz;
 	header = (vm_offset_t)calloc (1, header_size);
 	xnu_build_corefile_header (header, segment_count,
-		r_list_length (threads_list), command_size);
+		r_list_length (threads_list), command_size, dbg->pid);
 
 	if (!dbg->maps) perror ("There are not loaded maps");
 	if (xnu_write_mem_maps_to_file (corefile_fd, dbg->maps, round_page (header_size),
