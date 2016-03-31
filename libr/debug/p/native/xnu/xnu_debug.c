@@ -574,7 +574,7 @@ static void get_mach_header_sizes(size_t *mach_header_sz,
 // XXX: What about arm?
 }
 
-static cpu_type_t get_cpu_type (pid_t pid) {
+static cpu_type_t xnu_get_cpu_type (pid_t pid) {
 	int mib[CTL_MAXNAME];
 	size_t len = CTL_MAXNAME;
 	cpu_type_t cpu_type;
@@ -595,7 +595,7 @@ static cpu_type_t get_cpu_type (pid_t pid) {
 	return NULL;
 }
 
-static cpu_subtype_t get_cpu_subtype () {
+static cpu_subtype_t xnu_get_cpu_subtype () {
 	size_t size;
 	cpu_subtype_t subtype;
 
@@ -611,8 +611,8 @@ static void xnu_build_corefile_header (vm_offset_t header,
 	struct mach_header_64 *mh64;
 	mh64 = (struct mach_header_64 *)header;
 	mh64->magic	= MH_MAGIC_64;
-	mh64->cputype = get_cpu_type (pid);
-	mh64->cpusubtype = get_cpu_subtype (); 
+	mh64->cputype = xnu_get_cpu_type (pid);
+	mh64->cpusubtype = xnu_get_cpu_subtype (); 
 	mh64->filetype = MH_CORE;
 	mh64->ncmds	= segment_count + thread_count;
 	mh64->sizeofcmds = command_size;
@@ -621,8 +621,8 @@ static void xnu_build_corefile_header (vm_offset_t header,
 	struct mach_header *mh;
 	mh = (struct mach_header *)header;
 	mh->magic = MH_MAGIC;
-	mh->cputype	= get_cpu_type (pid);
-	mh->cpusubtype = get_cpu_subtype ();
+	mh->cputype	= xnu_get_cpu_type (pid);
+	mh->cpusubtype = xnu_get_cpu_subtype ();
 	mh->filetype = MH_CORE;
 	mh->ncmds = segment_count + thread_count;
 	mh->sizeofcmds = command_size;
@@ -676,7 +676,7 @@ static int xnu_prepare_corefile (RDebug *dbg, const char *newcorefile) {
 	}
 #endif
 
-	printf ("Creating file in: %s\n", corefile);
+	eprintf ("Creating file in: %s\n", corefile);
 
   	corefile_fd = open (corefile, O_RDWR | O_CREAT | O_EXCL, 0600);
   	if (corefile_fd < 0) {
@@ -698,7 +698,7 @@ static int xnu_prepare_corefile (RDebug *dbg, const char *newcorefile) {
 /* XXX Apart from writing to the file, it also creates the commands, */
 /* XXX which follow the header. */
 /* XXX Maybe this function needs refactoring, but I haven't come up with */
-/* XXX a better way to do it. */
+/* XXX a better way to do it yet. */
 static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset,
 	vm_offset_t header, int header_end, int segment_command_sz, int *hoffset_out) {
 	RListIter *iter, *iter2;
@@ -717,7 +717,7 @@ static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset
 #endif
 
 	r_list_foreach_safe (mem_maps, iter, iter2, curr_map) {
-		printf ("Writing section from 0x%llx to 0x%llx (%llu)\n", 
+		eprintf ("Writing section from 0x%llx to 0x%llx (%llu)\n", 
 			curr_map->addr, curr_map->addr_end, curr_map->size);
 
 		vm_map_offset_t vmoffset = curr_map->addr;
@@ -769,10 +769,10 @@ static int xnu_write_mem_maps_to_file (int fd, RList *mem_maps, int start_offset
 
 				if ((kr != KERN_SUCCESS) || (xfer_size != local_size)) {
 					eprintf ("Failed to read target memory\n"); // XXX: Improve this message?
-					printf ("[DEBUG] kr = %d\n", kr);
-					printf ("[DEBUG] KERN_SUCCESS = %d\n", KERN_SUCCESS);
-					printf ("[DEBUG] xfer_size = %llu\n", xfer_size);
-					printf ("[DEBUG] local_size = %d\n", local_size);
+					eprintf ("[DEBUG] kr = %d\n", kr);
+					eprintf ("[DEBUG] KERN_SUCCESS = %d\n", KERN_SUCCESS);
+					eprintf ("[DEBUG] xfer_size = %llu\n", xfer_size);
+					eprintf ("[DEBUG] local_size = %d\n", local_size);
 					if (kr > 1) error = -1; // XXX: INVALID_ADDRESS is not a bug right know
 					goto cleanup;
 				}
@@ -833,7 +833,7 @@ static void xnu_collect_thread_state (thread_t port, void *tirp) {
 
 #define CORE_ALL_SECT 0
 
-int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
+RBuffer *xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	int error = 0, i;
 	int tstate_size;
 	int segment_count;
@@ -845,6 +845,7 @@ int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	off_t foffset;
 	vm_map_offset_t	vmoffset;
 
+	RBuffer *buffer;
 	vm_offset_t header;
 	RListIter *iter, *iter2;
 	RList *threads_list;
@@ -853,11 +854,14 @@ int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	coredump_thread_state_flavor_t flavors[MAX_TSTATE_FLAVORS];
 	tir_t tir;
 
+#if 0
 	int corefile_fd = xnu_prepare_corefile (dbg, newcorefile);
 	if (corefile_fd < 0) {
 		eprintf ("Could not create corefile to dump\n");
 		return false;
 	}
+#endif
+	buffer = R_NEW0 (RBuffer);
 
 	get_mach_header_sizes (&mach_header_sz, &segment_command_sz);
 	(void)task_suspend(task);
@@ -885,7 +889,7 @@ int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	if (xnu_write_mem_maps_to_file (corefile_fd, dbg->maps, round_page (header_size),
 		header, mach_header_sz, segment_command_sz, &hoffset) < 0) {
 		eprintf ("There was an error while writing the memory maps");
-		error = -1;
+		error = false;
 		goto cleanup;
 	}
 
@@ -907,7 +911,7 @@ int xnu_generate_corefile (RDebug *dbg, const char *newcorefile) {
 	}
 
 cleanup:
-	if (corefile_fd >= 0) close (corefile_fd);
+	if (corefile_fd > 0) close (corefile_fd);
 	if (header) free ((void *)header);
 	if (threads_list) r_list_free (threads_list);
 

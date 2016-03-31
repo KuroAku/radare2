@@ -229,7 +229,7 @@ static int coredump_nflavors = 3;
 #endif
 
 #define MAX_TSTATE_FLAVORS 10
-#define DEFAULT_COREFILE_DEST "/cores/core.%u"
+#define DEFAULT_COREFILE_DEST "core.%u"
 
 typedef struct {
 	vm_offset_t header; 
@@ -241,7 +241,7 @@ typedef struct {
 task_t pid_to_task (int pid);
 int xnu_get_vmmap_entries_for_pid (pid_t pid);
 char *xnu_corefile_default_location();
-int xnu_generate_corefile(RDebug *dbg, const char *newcorefile);
+RBuffer *xnu_generate_corefile(RDebug *dbg, const char *newcorefile);
 int xnu_reg_read (RDebug *dbg, int type, ut8 *buf, int size);
 int xnu_reg_write (RDebug *dgb, int type, const ut8 *buf, int size);
 const char *xnu_reg_profile (RDebug *dbg);
